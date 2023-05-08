@@ -27,21 +27,25 @@ from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 
 from wenet.dataset.dataset import Dataset
+from wenet.transformer.asr_model import init_asr_model
 from wenet.utils.checkpoint import (load_checkpoint, save_checkpoint,
                                     load_trained_modules)
 from wenet.utils.executor import Executor
 from wenet.utils.file_utils import read_symbol_table, read_non_lang_symbols
-from wenet.utils.scheduler import WarmupLR, NoamHoldAnnealing
+from wenet.utils.scheduler import WarmupLR
 from wenet.utils.config import override_config
-from wenet.utils.init_model import init_model
 
 def get_args():
     parser = argparse.ArgumentParser(description='training your network')
     parser.add_argument('--config', required=True, help='config file')
-    parser.add_argument('--data_type',
+    parser.add_argument('--train_data_type',
                         default='raw',
                         choices=['raw', 'shard'],
-                        help='train and cv data type')
+                        help='train data type')
+    parser.add_argument('--cv_data_type',
+                        default='raw',
+                        choices=['raw', 'shard'],
+                        help='cv data type')
     parser.add_argument('--train_data', required=True, help='train data file')
     parser.add_argument('--cv_data', required=True, help='cv data file')
     parser.add_argument('--gpu',
@@ -116,10 +120,7 @@ def get_args():
                         type=lambda s: [str(mod) for mod in s.split(",") if s != ""],
                         help="List of encoder modules \
                         to initialize ,separated by a comma")
-    parser.add_argument('--lfmmi_dir',
-                        default='',
-                        required=False,
-                        help='LF-MMI dir')
+
 
     args = parser.parse_args()
     return args
@@ -153,13 +154,12 @@ def main():
     cv_conf['speed_perturb'] = False
     cv_conf['spec_aug'] = False
     cv_conf['spec_sub'] = False
-    cv_conf['spec_trim'] = False
     cv_conf['shuffle'] = False
     non_lang_syms = read_non_lang_symbols(args.non_lang_syms)
 
-    train_dataset = Dataset(args.data_type, args.train_data, symbol_table,
+    train_dataset = Dataset(args.train_data_type, args.train_data, symbol_table,
                             train_conf, args.bpe_model, non_lang_syms, True)
-    cv_dataset = Dataset(args.data_type,
+    cv_dataset = Dataset(args.cv_data_type,
                          args.cv_data,
                          symbol_table,
                          cv_conf,
@@ -189,8 +189,6 @@ def main():
     configs['output_dim'] = vocab_size
     configs['cmvn_file'] = args.cmvn
     configs['is_json_cmvn'] = True
-    configs['lfmmi_dir'] = args.lfmmi_dir
-
     if args.rank == 0:
         saved_config_path = os.path.join(args.model_dir, 'train.yaml')
         with open(saved_config_path, 'w') as fout:
@@ -198,26 +196,40 @@ def main():
             fout.write(data)
 
     # Init asr model from configs
-    model = init_model(configs)
+    model = init_asr_model(configs, symbol_table)
     print(model)
     num_params = sum(p.numel() for p in model.parameters())
-    print('the number of model params: {:,d}'.format(num_params))
+    print('the number of model params: {}'.format(num_params))
 
     # !!!IMPORTANT!!!
     # Try to export the model by script, if fails, we should refine
     # the code to satisfy the script export requirements
-    if args.rank == 0:
-        script_model = torch.jit.script(model)
-        script_model.save(os.path.join(args.model_dir, 'init.zip'))
+    #if args.rank == 0:
+    #    script_model = torch.jit.script(model)
+    #    script_model.save(os.path.join(args.model_dir, 'init.zip'))
     executor = Executor()
     # If specify checkpoint, load some info from checkpoint
+    infos = {}
     if args.checkpoint is not None:
         infos = load_checkpoint(model, args.checkpoint)
-    elif args.enc_init is not None:
-        logging.info('load pretrained encoders: {}'.format(args.enc_init))
-        infos = load_trained_modules(model, args)
     else:
-        infos = {}
+        checkpoint_num = -1
+        list_file = os.listdir(args.model_dir)
+        for i in list_file:
+            if '.pt' in i and i != 'init.pt':
+                i_num = float(i.split('.')[0].replace('_','.'))
+                checkpoint_num = i_num if i_num > checkpoint_num else checkpoint_num
+        if str(checkpoint_num).split('.')[0] + '.pt' in list_file:
+            checkpoint = args.model_dir + '/' + str(checkpoint_num).split('.')[0] + '.pt'
+        else:
+            checkpoint = args.model_dir + '/' + str(checkpoint_num).replace('.','_') + '.pt'
+        if checkpoint_num != -1:
+            infos = load_checkpoint(model, checkpoint)
+
+    if args.enc_init is not None:
+        logging.debug('load pretrained encoders: {}'.format(args.enc_init))
+        infos = load_trained_modules(model, args)
+
     start_epoch = infos.get('epoch', -1) + 1
     cv_loss = infos.get('cv_loss', 0.0)
     step = infos.get('step', -1)
@@ -249,23 +261,13 @@ def main():
         device = torch.device('cuda' if use_cuda else 'cpu')
         model = model.to(device)
 
-    if configs['optim'] == 'adam':
-        optimizer = optim.Adam(model.parameters(), **configs['optim_conf'])
-    elif configs['optim'] == 'adamw':
-        optimizer = optim.AdamW(model.parameters(), **configs['optim_conf'])
-    else:
-        raise ValueError("unknown optimizer: " + configs['optim'])
-    if configs['scheduler'] == 'warmuplr':
-        scheduler = WarmupLR(optimizer, **configs['scheduler_conf'])
-    elif configs['scheduler'] == 'NoamHoldAnnealing':
-        scheduler = NoamHoldAnnealing(optimizer, **configs['scheduler_conf'])
-    else:
-        raise ValueError("unknown scheduler: " + configs['scheduler'])
-
+    optimizer = optim.Adam(model.parameters(), **configs['optim_conf'])
+    scheduler = WarmupLR(optimizer, **configs['scheduler_conf'])
     final_epoch = None
     configs['rank'] = args.rank
     configs['is_distributed'] = distributed
     configs['use_amp'] = args.use_amp
+    configs['model_dir'] = args.model_dir
     if start_epoch == 0 and args.rank == 0:
         save_model_path = os.path.join(model_dir, 'init.pt')
         save_checkpoint(model, save_model_path)
@@ -305,7 +307,6 @@ def main():
 
     if final_epoch is not None and args.rank == 0:
         final_model_path = os.path.join(model_dir, 'final.pt')
-        os.remove(final_model_path) if os.path.exists(final_model_path) else None
         os.symlink('{}.pt'.format(final_epoch), final_model_path)
         writer.close()
 

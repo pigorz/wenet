@@ -20,8 +20,6 @@ import yaml
 import torch
 from collections import OrderedDict
 
-import datetime
-
 
 def load_checkpoint(model: torch.nn.Module, path: str) -> dict:
     if torch.cuda.is_available():
@@ -55,7 +53,6 @@ def save_checkpoint(model: torch.nn.Module, path: str, infos=None):
     info_path = re.sub('.pt$', '.yaml', path)
     if infos is None:
         infos = {}
-    infos['save_time'] = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
     with open(info_path, 'w') as fout:
         data = yaml.dump(infos)
         fout.write(data)

@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # Modified from ESPnet(https://github.com/espnet/espnet)
+
 """Decoder definition."""
 from typing import Tuple, List, Optional
 
 import torch
+from typeguard import check_argument_types
 
 from wenet.transformer.attention import MultiHeadedAttention
 from wenet.transformer.decoder_layer import DecoderLayer
 from wenet.transformer.embedding import PositionalEncoding
-from wenet.transformer.embedding import NoPositionalEncoding
 from wenet.transformer.positionwise_feed_forward import PositionwiseFeedForward
 from wenet.utils.mask import (subsequent_mask, make_pad_mask)
 
@@ -41,10 +42,10 @@ class TransformerDecoder(torch.nn.Module):
         normalize_before:
             True: use layer_norm before each sub-block of a layer.
             False: use layer_norm after each sub-block of a layer.
-        src_attention: if false, encoder-decoder cross attention is not
-                       applied, such as CIF model
+        concat_after: whether to concat attention layer's input and output
+            True: x -> x + linear(concat(x, att(x)))
+            False: x -> x + att(x)
     """
-
     def __init__(
         self,
         vocab_size: int,
@@ -59,8 +60,9 @@ class TransformerDecoder(torch.nn.Module):
         input_layer: str = "embed",
         use_output_layer: bool = True,
         normalize_before: bool = True,
-        src_attention: bool = True,
+        concat_after: bool = False,
     ):
+        assert check_argument_types()
         super().__init__()
         attention_dim = encoder_output_size
 
@@ -69,9 +71,6 @@ class TransformerDecoder(torch.nn.Module):
                 torch.nn.Embedding(vocab_size, attention_dim),
                 PositionalEncoding(attention_dim, positional_dropout_rate),
             )
-        elif input_layer == 'none':
-            self.embed = NoPositionalEncoding(attention_dim,
-                                              positional_dropout_rate)
         else:
             raise ValueError(f"only 'embed' is supported: {input_layer}")
 
@@ -86,12 +85,12 @@ class TransformerDecoder(torch.nn.Module):
                 MultiHeadedAttention(attention_heads, attention_dim,
                                      self_attention_dropout_rate),
                 MultiHeadedAttention(attention_heads, attention_dim,
-                                     src_attention_dropout_rate)
-                if src_attention else None,
+                                     src_attention_dropout_rate),
                 PositionwiseFeedForward(attention_dim, linear_units,
                                         dropout_rate),
                 dropout_rate,
                 normalize_before,
+                concat_after,
             ) for _ in range(self.num_blocks)
         ])
 
@@ -203,8 +202,10 @@ class BiTransformerDecoder(torch.nn.Module):
         normalize_before:
             True: use layer_norm before each sub-block of a layer.
             False: use layer_norm after each sub-block of a layer.
+        concat_after: whether to concat attention layer's input and output
+            True: x -> x + linear(concat(x, att(x)))
+            False: x -> x + att(x)
     """
-
     def __init__(
         self,
         vocab_size: int,
@@ -220,20 +221,22 @@ class BiTransformerDecoder(torch.nn.Module):
         input_layer: str = "embed",
         use_output_layer: bool = True,
         normalize_before: bool = True,
+        concat_after: bool = False,
     ):
 
+        assert check_argument_types()
         super().__init__()
         self.left_decoder = TransformerDecoder(
             vocab_size, encoder_output_size, attention_heads, linear_units,
             num_blocks, dropout_rate, positional_dropout_rate,
             self_attention_dropout_rate, src_attention_dropout_rate,
-            input_layer, use_output_layer, normalize_before)
+            input_layer, use_output_layer, normalize_before, concat_after)
 
         self.right_decoder = TransformerDecoder(
             vocab_size, encoder_output_size, attention_heads, linear_units,
             r_num_blocks, dropout_rate, positional_dropout_rate,
             self_attention_dropout_rate, src_attention_dropout_rate,
-            input_layer, use_output_layer, normalize_before)
+            input_layer, use_output_layer, normalize_before, concat_after)
 
     def forward(
         self,

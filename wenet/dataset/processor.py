@@ -49,7 +49,7 @@ def url_opener(data):
                 stream = open(url, 'rb')
             # network file, such as HTTP(HDFS/OSS/S3)/HTTPS/SCP
             else:
-                cmd = f'wget -q -O - {url}'
+                cmd = f'curl -s -L {url}'
                 process = Popen(cmd, shell=True, stdout=PIPE)
                 sample.update(process=process)
                 stream = process.stdout
@@ -327,7 +327,8 @@ def __tokenize_by_bpe_model(sp, txt):
     # Example:
     #   txt   = "你好 ITS'S OKAY 的"
     #   chars = ["你", "好", " ITS'S OKAY ", "的"]
-    chars = pattern.split(txt.upper())
+    # chars = pattern.split(txt.upper())
+    chars = pattern.split(txt.lower())
     mix_chars = [w for w in chars if len(w.strip()) > 0]
     for ch_or_w in mix_chars:
         # ch_or_w is a single CJK charater(i.e., "你"), do nothing.
@@ -446,7 +447,6 @@ def spec_aug(data, num_t_mask=2, num_f_mask=2, max_t=50, max_f=10, max_w=80):
 def spec_sub(data, max_t=20, num_t_sub=3):
     """ Do spec substitute
         Inplace operation
-        ref: U2++, section 3.2.3 [https://arxiv.org/abs/2106.05642]
 
         Args:
             data: Iterable[{key, feat, label}]
@@ -470,29 +470,6 @@ def spec_sub(data, max_t=20, num_t_sub=3):
             pos = random.randint(0, start)
             y[start:end, :] = x[start - pos:end - pos, :]
         sample['feat'] = y
-        yield sample
-
-
-def spec_trim(data, max_t=20):
-    """ Trim tailing frames. Inplace operation.
-        ref: TrimTail [https://arxiv.org/abs/2211.00522]
-
-        Args:
-            data: Iterable[{key, feat, label}]
-            max_t: max width of length trimming
-
-        Returns
-            Iterable[{key, feat, label}]
-    """
-    for sample in data:
-        assert 'feat' in sample
-        x = sample['feat']
-        assert isinstance(x, torch.Tensor)
-        max_frames = x.size(0)
-        length = random.randint(1, max_t)
-        if length < max_frames / 2:
-            y = x.clone().detach()[:max_frames - length]
-            sample['feat'] = y
         yield sample
 
 

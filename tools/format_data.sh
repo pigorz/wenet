@@ -17,6 +17,8 @@ oov="<unk>"
 bpecode=""
 allow_one_column=false
 raw=""
+syllable=""
+lexicon=""
 verbose=0
 trans_type=char
 filetype=""
@@ -97,7 +99,10 @@ fi
 mkdir -p ${tmpdir}/output
 if [ -n "${bpecode}" ]; then
     if [ "${trans_type}" == "cn_char_en_bpe" ]; then
-        tools/text2token.py -s 1 -n 1 -m ${bpecode} ${dir}/text --trans_type ${trans_type} > ${tmpdir}/output/token.scp
+        python tools/text2char_bpe.py ${dir}/text ${dic} ${bpecode} ${tmpdir}/output/token.scp > ${tmpdir}/output/text2char_bpe.log
+        # tools/text2token.py -s 1 -n 1 -m ${bpecode} ${dir}/text --trans_type ${trans_type} > ${tmpdir}/output/token.scp
+    elif [ "${trans_type}" == "cn_syllable_en_bpe" ]; then
+        python tools/text2syllable_bpe.py ${dir}/text ${lexicon} ${bpecode} ${tmpdir}/output/token.scp > ${tmpdir}/output/text2syllable_bpe.log
     else
         paste -d " " <(awk '{print $1}' ${dir}/text) <(cut -f 2- -d" " ${dir}/text \
             | tools/spm_encode --model=${bpecode} --output_format=piece) \
@@ -107,6 +112,8 @@ elif [ -n "${nlsyms}" ]; then
     tools/text2token.py -s 1 -n 1 -l ${nlsyms} ${dir}/text --trans_type ${trans_type} > ${tmpdir}/output/token.scp
 elif [ -n "${raw}" ]; then
     cat $dir/text > ${tmpdir}/output/token.scp
+elif [ -n "${syllable}" ]; then
+    python tools/text2syllable_bpe.py ${dir}/text ${lexicon} ${tmpdir}/output/token.scp > ${tmpdir}/output/text2syllable_bpe.log
 else
     tools/text2token.py -s 1 -n 1 ${dir}/text --trans_type ${trans_type} > ${tmpdir}/output/token.scp
 fi
@@ -126,7 +133,7 @@ if [ -n "${category}" ]; then
     awk -v category=${category} '{print $1 " " category}' ${dir}/text \
         > ${tmpdir}/other/category.scp
 fi
-#cat ${dir}/utt2spk > ${tmpdir}/other/utt2spk.scp
+#cat ${dir}/utt2spk > ${tmpdir}/other/utt2spk.scp 
 
 # 4. Merge scp files into a one file
 opts=""

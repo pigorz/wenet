@@ -14,15 +14,14 @@
 
 import logging
 from contextlib import nullcontext
-
 # if your python version < 3.7 use the below one
 # from contextlib import suppress as nullcontext
 import torch
 from torch.nn.utils import clip_grad_norm_
+from wenet.utils.checkpoint import save_checkpoint
 
 
 class Executor:
-
     def __init__(self):
         self.step = 0
 
@@ -75,9 +74,9 @@ class Executor:
                     # The more details about amp can be found in
                     # https://pytorch.org/docs/stable/notes/amp_examples.html
                     with torch.cuda.amp.autocast(scaler is not None):
-                        loss_dict = model(feats, feats_lengths, target,
-                                          target_lengths)
-                        loss = loss_dict['loss'] / accum_grad
+                        loss, loss_att, loss_ctc, loss_lid = model(
+                            feats, feats_lengths, target, target_lengths)
+                        loss = loss / accum_grad
                     if use_amp:
                         scaler.scale(loss).backward()
                     else:
@@ -112,11 +111,28 @@ class Executor:
                     log_str = 'TRAIN Batch {}/{} loss {:.6f} '.format(
                         epoch, batch_idx,
                         loss.item() * accum_grad)
-                    for name, value in loss_dict.items():
-                        if name != 'loss' and value is not None:
-                            log_str += '{} {:.6f} '.format(name, value.item())
+                    if loss_att is not None:
+                        log_str += 'loss_att {:.6f} '.format(loss_att.item())
+                    if loss_ctc is not None:
+                        log_str += 'loss_ctc {:.6f} '.format(loss_ctc.item())
+                    if loss_lid is not None:
+                        log_str += 'loss_lid {:.6f} '.format(loss_lid.item())
                     log_str += 'lr {:.8f} rank {}'.format(lr, rank)
                     logging.debug(log_str)
+                    if epoch > 20 and loss.item() * accum_grad > 50:
+                        logging.debug('big loss key: ' + ' '.join(key))
+                if rank==0 and batch_idx%20000==0:
+                    lr = optimizer.param_groups[0]['lr']
+                    save_model_path = args['model_dir'] + '/' + '{}_{}.pt'.format(epoch, batch_idx//20000)
+                    save_checkpoint(
+                        model, save_model_path, {
+                            'epoch': epoch,
+                            'lr': lr,
+                            'step': self.step
+                        }
+                    )
+                    with open(args['model_dir'] + '/record','w') as f:
+                        f.write('{}_{}.pt'.format(epoch, batch_idx//20000))
 
     def cv(self, model, data_loader, device, args):
         ''' Cross validation on
@@ -138,17 +154,20 @@ class Executor:
                 num_utts = target_lengths.size(0)
                 if num_utts == 0:
                     continue
-                loss_dict = model(feats, feats_lengths, target, target_lengths)
-                loss = loss_dict['loss']
+                loss, loss_att, loss_ctc, loss_lid = model(feats, feats_lengths, target,
+                                                 target_lengths)
                 if torch.isfinite(loss):
                     num_seen_utts += num_utts
                     total_loss += loss.item() * num_utts
                 if batch_idx % log_interval == 0:
                     log_str = 'CV Batch {}/{} loss {:.6f} '.format(
                         epoch, batch_idx, loss.item())
-                    for name, value in loss_dict.items():
-                        if name != 'loss' and value is not None:
-                            log_str += '{} {:.6f} '.format(name, value.item())
+                    if loss_att is not None:
+                        log_str += 'loss_att {:.6f} '.format(loss_att.item())
+                    if loss_ctc is not None:
+                        log_str += 'loss_ctc {:.6f} '.format(loss_ctc.item())
+                    if loss_lid is not None:
+                        log_str += 'loss_lid {:.6f} '.format(loss_lid.item())
                     log_str += 'history loss {:.6f}'.format(total_loss /
                                                             num_seen_utts)
                     log_str += ' rank {}'.format(rank)

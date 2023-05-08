@@ -125,6 +125,7 @@ if __name__ == '__main__':
     else:
         out = open(args.out, 'w', encoding='utf-8')
     done = False
+    '''
     while not done:
         for i, fid in enumerate(fids):
             line = fid.readline()
@@ -138,6 +139,20 @@ if __name__ == '__main__':
             out.write('\t')
             out.write('{}:{}'.format(fields[i], content))
         out.write('\n')
+    '''
+    #上述注释的源代码是一行一行读,如果 feats.scp和 text长度或者顺序不一致时
+    dict_lst = [{},{},{},{},{},{}]
+    for i, fid in enumerate(fids):
+        line = fid.read().splitlines()
+        for iii in line:
+            utt, context=iii.split(' ',1)
+            dict_lst[i][utt] = context
+    for i in dict_lst[0]:
+        try:
+            out.write('utt:{}\tfeat:{}\tfeat_shape:{}\ttext:{}\ttoken:{}\ttoken:{}\ttokenid:{}\ttoken_shape:{}\n'.format(i,dict_lst[0][i],dict_lst[1][i],dict_lst[2][i],dict_lst[3][i],dict_lst[4][i],dict_lst[5][i]))
+        except:
+            continue
+    # >>> @ hengxinyin
 
     for f in fids:
         f.close()

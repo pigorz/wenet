@@ -19,6 +19,7 @@ from typing import Tuple
 
 import torch
 from torch import nn
+from typeguard import check_argument_types
 
 
 class ConvolutionModule(nn.Module):
@@ -36,6 +37,7 @@ class ConvolutionModule(nn.Module):
             kernel_size (int): Kernel size of conv layers.
             causal (int): Whether use causal convolution or not
         """
+        assert check_argument_types()
         super().__init__()
 
         self.pointwise_conv1 = nn.Conv1d(
@@ -120,7 +122,7 @@ class ConvolutionModule(nn.Module):
             assert (x.size(2) > self.lorder)
             new_cache = x[:, :, -self.lorder:]
         else:
-            # It's better we just return None if no cache is required,
+            # It's better we just return None if no cache is requried,
             # However, for JIT export, here we just fake one tensor instead of
             # None.
             new_cache = torch.zeros((0, 0, 0), dtype=x.dtype, device=x.device)

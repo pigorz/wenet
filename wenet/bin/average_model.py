@@ -55,6 +55,9 @@ def main():
     val_scores = []
     if args.val_best:
         yamls = glob.glob('{}/[!train]*.yaml'.format(args.src_path))
+        yamls_1 = [ i for i in yamls if '_' not in i.split('/')[-1]]
+        yamls = yamls_1
+        print(yamls)
         for y in yamls:
             with open(y, 'r') as f:
                 dic_yaml = yaml.load(f, Loader=yaml.FullLoader)
